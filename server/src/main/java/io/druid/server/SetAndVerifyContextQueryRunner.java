@@ -19,6 +19,8 @@
 
 package io.druid.server;
 
+import com.google.common.collect.ImmutableMap;
+import io.druid.client.DirectDruidClient;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.query.Query;
 import io.druid.query.QueryContexts;
@@ -31,37 +33,49 @@ import java.util.Map;
 /**
  * Use this QueryRunner to set and verify Query contexts.
  */
-public class SetAndVerifyContextQueryRunner<T> implements QueryRunner<T>
+public class SetAndVerifyContextQueryRunner implements QueryRunner
 {
   private final ServerConfig serverConfig;
-  private final QueryRunner<T> baseRunner;
+  private final QueryRunner baseRunner;
+  private final long startTimeMillis;
 
-  public SetAndVerifyContextQueryRunner(ServerConfig serverConfig, QueryRunner<T> baseRunner)
+  public SetAndVerifyContextQueryRunner(ServerConfig serverConfig, QueryRunner baseRunner, long startTimeMillis)
   {
     this.serverConfig = serverConfig;
     this.baseRunner = baseRunner;
+    this.startTimeMillis = startTimeMillis;
   }
 
   @Override
-  public Sequence<T> run(QueryPlus<T> queryPlus, Map<String, Object> responseContext)
+  public Sequence run(QueryPlus queryPlus, Map responseContext)
   {
     return baseRunner.run(
-        QueryPlus.wrap(withTimeoutAndMaxScatterGatherBytes(queryPlus.getQuery(), serverConfig)),
+        QueryPlus.wrap((Query) withTimeoutAndMaxScatterGatherBytes(
+            queryPlus.getQuery(),
+            serverConfig
+        )),
         responseContext
     );
   }
 
-  public Query<T> withTimeoutAndMaxScatterGatherBytes(Query<T> query, ServerConfig serverConfig)
+  public <T, QueryType extends Query<T>> QueryType withTimeoutAndMaxScatterGatherBytes(
+      final QueryType query,
+      ServerConfig serverConfig
+  )
   {
-    return QueryContexts.verifyMaxQueryTimeout(
-        QueryContexts.withMaxScatterGatherBytes(
+     Query new_query = QueryContexts.verifyMaxQueryTimeout(
+     QueryContexts.withMaxScatterGatherBytes(
             QueryContexts.withDefaultTimeout(
-                query,
+                (Query) query,
                 Math.min(serverConfig.getDefaultQueryTimeout(), serverConfig.getMaxQueryTimeout())
             ),
             serverConfig.getMaxScatterGatherBytes()
         ),
         serverConfig.getMaxQueryTimeout()
     );
+
+    return (QueryType) new_query.withOverriddenContext(ImmutableMap.of(DirectDruidClient.QUERY_FAIL_TIME, this.startTimeMillis + QueryContexts.getTimeout(new_query)));
   }
+
+
 }
